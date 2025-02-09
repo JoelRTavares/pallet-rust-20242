@@ -47,6 +47,8 @@ pub mod pallet {
         FilmeAdicionado { id: u32, nome: Vec<u8> },
 		FilmeDisponivel { id: u32, nome: Vec<u8>, bilhetes_vendidos:u32, ano_lancamento_entre_2000_e_2025:u32, mes_lancamento:u8, dia_lancamento:u8, genero:Genero },
 		NenhumFilmeArmazenado,
+        FilmeDeletadoComSucesso { id: u32, nome: Vec<u8> },
+        FilmeAtualizadoComSucesso { id: u32, nome: Vec<u8> },
     }
 
     #[pallet::error]
@@ -59,6 +61,9 @@ pub mod pallet {
 		DiaInvalido,
 		DataInvalida,
 		FilmesArmazenamentoCheio,
+        SemFilmeComEsseId,
+        SemFilmesDisponiveis,
+        ErroInexperado,
 	}
     #[pallet::storage]
     #[pallet::getter(fn filmes)]
@@ -157,7 +162,7 @@ pub mod pallet {
 			let filmes = Filmes::<T>::get();
 
 			if filmes.is_empty() {
-				Self::deposit_event(Event::NenhumFilmeArmazenado);
+                ensure!(false, Error::<T>::SemFilmesDisponiveis);
 			} else {
 				// Emite um evento com a lista de filmes
 				for filme in filmes.iter() {
@@ -173,6 +178,119 @@ pub mod pallet {
 				}
 			}
 			Ok(())
+        }
+        #[pallet::call_index(2)]
+        #[pallet::weight(Weight::default())]
+        pub fn deletar_filme(
+            origin: OriginFor<T>,
+            id_filme_a_deletar: u32,
+        ) -> DispatchResult {
+            ensure_signed(origin)?;
+			
+			let film = Filmes::<T>::get();
+
+            if film.is_empty(){
+                ensure!(false, Error::<T>::SemFilmesDisponiveis);
+            }
+            let mut filme_existe = false;
+            let mut id_vec = 0;
+			for (i, filme) in film.iter().enumerate() {
+				if filme.id == id_filme_a_deletar {
+                    filme_existe = true;
+                    id_vec = i;
+				}
+			}
+            ensure!(filme_existe == true, Error::<T>::SemFilmeComEsseId);
+            // let filme_a_deletar = film[id_vec];
+            // let nome = filme_a_deletar.nome.clone();
+			Filmes::<T>::mutate(|filmes| {
+				let mut filmes_vec: BoundedVec<Filme, ConstU32<100>> = filmes.clone().into();
+                let filme_a_deletar = filmes_vec.remove(id_vec);
+				if filmes_vec.len() == filmes.len() - 1 {
+					*filmes = filmes_vec;
+                    Self::deposit_event(Event::FilmeDeletadoComSucesso { id: id_filme_a_deletar, nome: filme_a_deletar.nome.to_vec() });
+				}
+			});
+			
+
+            Ok(())
+        }
+        #[pallet::call_index(3)]
+        #[pallet::weight(Weight::default())]
+        pub fn atualizar_filme(
+            origin: OriginFor<T>,
+            id_filme_a_atualizar: u32,
+            nome: Vec<u8>,
+            bilhetes_vendidos: u32,
+            ano_lancamento_entre_2000_e_2025: u32,
+            mes_lancamento: u8,
+            dia_lancamento: u8,
+            genero: Genero,
+        ) -> DispatchResult {
+            ensure_signed(origin)?;
+			
+			let film = Filmes::<T>::get();
+            
+            if film.is_empty(){
+                return Err(Error::<T>::SemFilmesDisponiveis.into());
+            }
+            if nome.to_vec().is_empty(){
+                return Err(Error::<T>::FilmeSemNome.into());
+            }
+            let nome_bounded: BoundedVec<u8, ConstU32<100>> =
+                nome.clone().try_into().map_err(|_| Error::<T>::NomeMuitoLongo)?;
+            for filme in film.iter() {
+				if filme.nome == nome_bounded {
+					return Err(Error::<T>::NomeJaExistente.into());
+				}
+			}
+
+            let mut filme_existe = false;
+            let mut id_vec = 0;
+			for (i, filme) in film.iter().enumerate() {
+				if filme.id == id_filme_a_atualizar {
+                    filme_existe = true;
+                    id_vec = i;
+				}
+			}
+            ensure!(filme_existe == true, Error::<T>::SemFilmeComEsseId);
+           
+            ensure!(ano_lancamento_entre_2000_e_2025 > 1999 && ano_lancamento_entre_2000_e_2025 < 2026, Error::<T>::AnoInvalido);
+            ensure!(mes_lancamento > 0 && mes_lancamento < 13, Error::<T>::MesInvalido);
+            ensure!(dia_lancamento > 0 && dia_lancamento < 32, Error::<T>::DiaInvalido);
+
+            match mes_lancamento {
+                4 | 6 | 9 | 11 if dia_lancamento > 30 => ensure!(false , Error::<T>::DataInvalida),
+                2 => {
+                    if ano_lancamento_entre_2000_e_2025 % 4 == 0 && (ano_lancamento_entre_2000_e_2025 % 100 != 0 || ano_lancamento_entre_2000_e_2025 % 400 == 0) {
+                        if dia_lancamento > 29 {
+                            ensure!(false , Error::<T>::DataInvalida);
+                        }
+                    } else if dia_lancamento > 28{
+                        ensure!(false , Error::<T>::DataInvalida);
+                    }
+                },
+                _ => (),
+            }
+			Filmes::<T>::mutate(|filmes| {
+				let mut filmes_vec: BoundedVec<Filme, ConstU32<100>> = filmes.clone().into();
+                let mut filme_a_atualizar = filmes_vec[id_vec].clone();
+
+                filme_a_atualizar.nome = nome_bounded;
+                filme_a_atualizar.bilhetes_vendidos = bilhetes_vendidos;               
+                filme_a_atualizar.ano_lancamento_entre_2000_e_2025 = ano_lancamento_entre_2000_e_2025;
+                filme_a_atualizar.mes_lancamento = mes_lancamento;
+                filme_a_atualizar.dia_lancamento = dia_lancamento; 
+                filme_a_atualizar.genero = genero;
+
+                filmes_vec[id_vec] = filme_a_atualizar.clone();
+				//if filmes_vec.len() == filmes.len(){
+					*filmes = filmes_vec;
+                    Self::deposit_event(Event::FilmeAtualizadoComSucesso { id: id_filme_a_atualizar, nome: filme_a_atualizar.nome.to_vec() });
+				//}
+			});
+			
+            Ok(())
         }
     }
 }
